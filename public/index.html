@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>whisper-lab</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: light dark; font: 15px/1.45 system-ui, sans-serif; }
+  body { margin: 0; padding: 12px 16px 40px; background: Canvas; color: CanvasText; }
+  h1 { font-size: 1.2rem; margin: 0 0 4px; }
+  .muted { opacity: .7; font-size: .85rem; }
+  section { margin: 14px 0; }
+  button, select, input { font: inherit; }
+  button { padding: 6px 14px; border-radius: 6px; border: 1px solid color-mix(in srgb, CanvasText 30%, transparent); background: color-mix(in srgb, CanvasText 6%, Canvas); color: inherit; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #rec { font-size: 1.1rem; padding: 10px 26px; font-weight: 600; }
+  #rec.on { background: #c62828; color: #fff; border-color: #c62828; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+  .meter { width: 160px; height: 8px; border-radius: 4px; background: color-mix(in srgb, CanvasText 12%, transparent); overflow: hidden; }
+  .meter > div { height: 100%; width: 0; background: #2e7d32; transition: width 60ms linear; }
+  fieldset { border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 6px; padding: 6px 10px; margin: 0; }
+  fieldset { min-width: 0; }
+  legend { font-size: .8rem; opacity: .75; padding: 0 4px; }
+  label.be { display: inline-flex; gap: 5px; align-items: center; margin-right: 12px; white-space: nowrap; }
+  @media (max-width: 500px) { label.be { white-space: normal; margin-right: 0; } }
+  label.be.off { opacity: .55; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  th, td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid color-mix(in srgb, CanvasText 14%, transparent); }
+  th { font-weight: 600; font-size: .8rem; opacity: .8; white-space: nowrap; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+  td.txt { min-width: 260px; max-width: 520px; }
+  td.notes { font-size: .78rem; opacity: .8; min-width: 180px; max-width: 360px; }
+  tr.ref td { background: color-mix(in srgb, #1565c0 10%, transparent); }
+  .err { color: #c62828; }
+  mark { background: color-mix(in srgb, #f9a825 45%, transparent); color: inherit; border-radius: 2px; }
+  mark.ins { background: color-mix(in srgb, #ef6c00 45%, transparent); }
+  del { opacity: .6; color: #c62828; }
+  .pending { opacity: .6; font-style: italic; }
+  .sentences { margin: 0; padding: 0; list-style: none; }
+  .sentences button { display: block; width: 100%; text-align: left; padding: 7px 10px; margin: 0; border: 0; border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent); border-radius: 0; background: none; font-size: .92rem; }
+  .sentences button.on { background: #1565c0; color: #fff; border-radius: 4px; }
+  details summary { cursor: pointer; margin: 8px 0 4px; font-size: .9rem; }
+  #readthis { font-size: 1.35rem; line-height: 1.35; font-weight: 600; margin: 8px 0 6px; min-height: 1.35em; overflow-wrap: anywhere; }
+  #readthis.empty { font-size: .9rem; font-weight: normal; opacity: .6; }
+  #counter { font-variant-numeric: tabular-nums; }
+  .jargon { text-decoration: underline dotted; text-underline-offset: 3px; }
+  audio { height: 32px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<h1>whisper-lab <span class="muted">— record once, compare every installed speech model</span></h1>
+<div class="muted" id="where"></div>
+
+<section>
+  <fieldset>
+    <legend>Sentence to read aloud (the reference for every row)</legend>
+    <div class="muted">Read this:</div>
+    <div id="readthis"></div>
+    <div class="muted" id="refnote"></div>
+    <div class="row" style="margin-top:4px">
+      <button id="prev">‹ Previous</button>
+      <span id="counter" class="muted"></span>
+      <button id="next">Next ›</button>
+      <span class="muted">dotted = jargon words, counted in the Jargon column</span>
+    </div>
+    <details id="allsentences">
+      <summary>All sentences</summary>
+      <ul class="sentences" id="sentences"></ul>
+    </details>
+  </fieldset>
+</section>
+
+<section class="row">
+  <button id="rec" disabled>● Record</button>
+  <div class="meter"><div id="level"></div></div>
+  <span id="timer" class="muted">0.0 s</span>
+  <span id="status" class="muted">loading…</span>
+</section>
+
+<section class="row">
+  <fieldset>
+    <legend>Models (greedy, temperature 0)</legend>
+    <div id="backends"></div>
+  </fieldset>
+  <fieldset>
+    <legend>Run</legend>
+    <label class="be"><input type="checkbox" id="sequential"> one at a time</label>
+    <span class="muted">off: all models in parallel (they share the GPU); on: each alone, for uncontended latency</span>
+  </fieldset>
+</section>
+
+<section class="row">
+  <fieldset>
+    <legend>Re-run a saved clip</legend>
+    <div class="row">
+      <select id="clips"><option value="">— saved clips —</option></select>
+      <button id="rerun" disabled>Re-run clip</button>
+      <audio id="player" controls preload="none"></audio>
+      <label class="muted">or a file: <input type="file" id="file" accept="audio/*"></label>
+    </div>
+  </fieldset>
+</section>
+
+<section>
+  <div class="row muted" style="margin-bottom:4px">
+    <span id="clipinfo"></span>
+    <span id="refhint"></span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>ref</th><th>Model</th><th>Transcript</th><th>WER</th><th>Jargon</th><th>Latency ms</th><th>Audio s</th><th>Notes</th></tr></thead>
+      <tbody id="results"></tbody>
+    </table>
+  </div>
+</section>
+
+<script type="module" src="lab.js"></script>
+</body>
+</html>

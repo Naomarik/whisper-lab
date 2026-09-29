@@ -1,0 +1,22 @@
+[
+  "Run the tests and fix whatever fails.",
+  "Rebase this branch onto main and resolve the conflicts.",
+  "Commit everything with a short message and push it.",
+  "Revert the last commit, it broke the build.",
+  "Cherry-pick the lockfile fix from the release branch.",
+  "Typecheck the whole repo and tell me what TypeScript complains about.",
+  "Open a pull request against main with a summary of your changes.",
+  "Refactor the settings page into smaller React components.",
+  "Why does Vite reload the whole page when I save a file?",
+  "Update the dependencies with pnpm and make sure the build still passes.",
+  "Add a PostgreSQL migration for the new users table.",
+  "Write a Dockerfile for the API and keep the image small.",
+  "Deploy it to the staging Kubernetes cluster and check the pod logs.",
+  "Stash my changes, pull the latest main, then pop the stash.",
+  "Add a unit test for the date parser with Vitest.",
+  "Rename this function everywhere and update the imports.",
+  "The useEffect hook runs twice in development, find out why.",
+  "Run ESLint on the project and fix the warnings automatically.",
+  "Squash the last three commits into one before we merge.",
+  "Profile the slow query and add an index if it helps."
+]

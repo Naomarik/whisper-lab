@@ -1,0 +1,21 @@
+# State lives outside the repo by default (~/.cache/whisper-lab); these cover a state dir or
+# stray artifacts placed inside it.
+.whisper-lab/
+state/
+clips/
+models/
+downloads/
+run/
+src/
+bin/
+build/
+build-*/
+transcribe-v*/
+*.bin
+*.gguf
+*.wav
+*.part
+*.log
+*.pid
+node_modules/
+.DS_Store

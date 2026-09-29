@@ -1,0 +1,28 @@
+{
+  "port": 8850,
+  "firstModelPort": 8851,
+  "threads": 0,
+  "defaultReference": "turbo-q5_0",
+  "prompt": "rebase, cherry-pick, typecheck, TypeScript, Vite, Vitest, pnpm, ESLint, React, useEffect, Dockerfile, Docker, Kubernetes, PostgreSQL, lockfile, repo.",
+  "jargon": [
+    "rebase",
+    "cherry-pick",
+    "typecheck",
+    "TypeScript",
+    "Vite",
+    "Vitest",
+    "pnpm",
+    "ESLint",
+    "React",
+    "useEffect",
+    "Dockerfile",
+    "Docker",
+    "Kubernetes",
+    "PostgreSQL",
+    "lockfile",
+    "repo",
+    "stash",
+    "squash",
+    "pod"
+  ]
+}
