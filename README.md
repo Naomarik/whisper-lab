@@ -83,7 +83,11 @@ Everything goes to the state dir, never the repo: `$WHISPER_LAB_HOME`, else
 Open <http://127.0.0.1:8850/>. Only installed models show up as rows.
 
 - Pick a sentence with **Previous** / **Next**, or from the full list, and press **Record**.
-  Read it aloud, then press **Stop**. Every model gets the clip.
+  Read it aloud, then press **Stop** (it keeps recording ~350 ms more so the last word isn't
+  cut). Every model gets the clip. The selector next to them switches the sentence set.
+- **Mic** picks the input (the raw mic, or a processed source such as EasyEffects'). The
+  recording is raw by default; **browser processing** turns on the browser's echo cancellation,
+  noise suppression and auto gain, for comparison. Each clip's label records both choices.
 - **one at a time** runs the models one after another, so each latency is uncontended. When it's
   off, they all run in parallel.
 - Each row is diffed against the sentence. Highlighted words are wrong, struck words are
@@ -92,6 +96,29 @@ Open <http://127.0.0.1:8850/>. Only installed models show up as rows.
 - Every recording is saved with its sentence and results in `<state dir>/clips`. Pick one under
   **Re-run a saved clip** to play it, see its saved results, or run it again. You can also load
   an audio file.
+- Each clip shows its **digital silence**: the share of exact-zero samples and the longest run of
+  zeros inside speech. A live mic has neither; ⚠ `zeroed` means noise suppression zeroed the
+  pauses, ⚠ `gated` means a gate (e.g. RNNoise's voice-activity threshold) cut holes into speech.
+
+## Tuning an EasyEffects mic preset (Linux)
+
+When [EasyEffects](https://github.com/wwmm/easyeffects) is running and follows the default
+input device (its default), the saved-clip box gets **Replay through EasyEffects** and a preset
+selector. A replay plays the clip through EasyEffects' input chain and saves the result as a new
+clip, `<clip> via <preset>`, with the same sentence, then runs every model on it. So: record a
+sentence once from the raw mic, then replay it through each preset, or through the current one
+after each tweak in EasyEffects, and compare the rows and the digital-silence note.
+
+How it works: a temporary `pw-loopback` virtual mic (`wlab_replay_in` → `wlab_replay`) becomes
+the default input, which EasyEffects follows. The clip plays into it while `pw-record` captures
+`easyeffects_source` at 16 kHz, and the recording is cut to the clip at the best-matching
+offset. Nothing is audible: the player is linked only to the virtual sink, and the replay stops
+if anything of it links to a hardware output. Afterwards the previous default input is restored
+and the virtual mic removed, also on errors or when the lab stops. A preset other than the
+current one is loaded with `easyeffects -l` and the previous one loaded back afterwards, which
+discards unsaved edits to it, so save your preset first. For the few seconds of a replay, other
+apps recording from the default input hear the replay's virtual mic. Needs `pw-loopback`,
+`pw-play`, `pw-record`, `pw-link` and `pactl`.
 
 Ports: `port` and `firstModelPort` in `config.json`, or `WHISPER_LAB_PORT` and
 `WHISPER_LAB_MODEL_PORT`. Each model keeps a fixed offset (catalog order), so its port doesn't
@@ -100,11 +127,15 @@ change when you install more. Logs and pids are in `<state dir>/run`.
 
 ## Customize
 
-- `sentences.json`: the sentences to read aloud (a JSON array of strings).
+- `sentences.json`: the `default` set's sentences to read aloud (a JSON array of strings).
 - `config.json`:
-  - `jargon`: the words scored in the Jargon column (case and punctuation are ignored)
-  - `prompt`: whisper's initial prompt. Whisper has no hotword list, but a prompt that contains
-    the words biases it toward spelling them that way. Parakeet takes no prompt.
+  - `jargon`: the `default` set's words scored in the Jargon column (case and punctuation are
+    ignored; the column counts jargon of any set)
+  - `prompt`: the `default` set's whisper initial prompt. Whisper has no hotword list, but a
+    prompt that contains the words biases it toward spelling them that way. Parakeet takes no
+    prompt. A clip is always transcribed with the prompt of the set it was recorded with.
+  - `sets`: more sentence sets, each `{sentences, jargon, prompt}`; `sova` holds
+    Sova's calibration sentences (a voice-dictation test set)
   - `port`, `firstModelPort`, `threads` (0 means min(8, CPUs)), and `defaultReference` (the
     reference row when a clip has no sentence)
 - `models.json`: the pinned downloads (URLs, sizes, sha256).

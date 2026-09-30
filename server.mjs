@@ -4,22 +4,25 @@
 // URLs, so it also works under a path prefix behind a reverse proxy.
 //
 //   GET  /api/health
-//   GET  /api/config                    {sentences, jargon, defaultReference}
+//   GET  /api/config                    {sets: {name: {sentences, jargon}}, defaultReference}
 //   GET  /api/backends                  [{id,label,kind,ready,reason?,note?}] (installed models only)
-//   POST /api/transcribe/:backend       body: 16 kHz mono WAV → {text, ms, wallMs, audioSec, bytes, notes}
-//   POST /api/clips?meta=<json>         body: WAV → {id}
+//   POST /api/transcribe/:backend?set=  body: 16 kHz mono WAV → {text, ms, wallMs, audioSec, bytes, notes}
+//   POST /api/clips?meta=<json>         body: WAV; meta {label?, reference?, set?} → {id, audioSec, silence}
 //   GET  /api/clips                     [{id, created, audioSec, bytes, label?, reference?, hasResults}]
 //   GET  /api/clips/:id                 the WAV
 //   GET  /api/clips/:id/meta            the metadata (incl. saved results)
 //   PUT  /api/clips/:id/results         body: JSON results table, or {results, reference} → {ok}
+//   GET  /api/easyeffects               {available, preset?, presets?, reason?}
+//   POST /api/clips/:id/replay?preset=  replays the clip through EasyEffects → the new clip {id, audioSec, silence, label}
 //
 // Clips live in <state dir>/clips. Logs carry method, path, status and time only.
 
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONFIG, REPO, SENTENCES, labPort, paths } from "./lib/catalog.mjs";
+import { CONFIG, REPO, SETS, labPort, paths } from "./lib/catalog.mjs";
 import { backends, parseWav } from "./lib/backends.mjs";
+import { eeStatus, replay } from "./lib/easyeffects.mjs";
 
 const PUBLIC = join(REPO, "public");
 const CLIPS = paths().clips;
@@ -70,7 +73,7 @@ async function backendInfo(b) {
   return info;
 }
 
-async function transcribe(b, wav) {
+async function transcribe(b, wav, prompt) {
   let clip;
   try {
     clip = parseWav(wav);
@@ -79,7 +82,7 @@ async function transcribe(b, wav) {
   }
   const t0 = performance.now();
   try {
-    const r = await b.transcribe(wav, clip);
+    const r = await b.transcribe(wav, prompt);
     const wallMs = Math.round(performance.now() - t0);
     return [200, { backend: b.id, text: r.text, ms: r.ms ?? wallMs, wallMs, audioSec: +clip.audioSec.toFixed(2), bytes: r.bytes ?? wav.length, notes: r.notes ?? "" }];
   } catch (err) {
@@ -92,6 +95,37 @@ function newClipId() {
   const p = (n) => String(n).padStart(2, "0");
   const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   return `${stamp}-${Math.random().toString(36).slice(2, 6).padEnd(4, "0")}`;
+}
+
+/**
+ * Digital silence: the fraction of exact-zero samples, and the longest zero run between the first
+ * and last sample above -40 dBFS. A live mic gives neither 1% exact zeros nor a 10 ms run inside
+ * speech; noise suppression and gates (RNNoise's VAD) do.
+ */
+function silence(pcm, rate) {
+  let zeros = 0;
+  for (const x of pcm) if (x === 0) zeros++;
+  const loud = (x) => Math.abs(x) > 328;
+  const first = pcm.findIndex(loud);
+  const last = pcm.findLastIndex(loud);
+  let run = 0;
+  let longest = 0;
+  for (let i = first; first >= 0 && i <= last; i++) longest = Math.max(longest, (run = pcm[i] === 0 ? run + 1 : 0));
+  const longestZeroMs = Math.round((longest / rate) * 1000);
+  return { zeroPct: +((zeros / Math.max(1, pcm.length)) * 100).toFixed(1), longestZeroMs, flagged: longestZeroMs >= 10 || zeros >= pcm.length / 100 };
+}
+
+/** Saves a WAV clip with its metadata → the new meta. */
+function saveClip(wav, clip, extra) {
+  mkdirSync(CLIPS, { recursive: true });
+  const id = newClipId();
+  writeFileSync(join(CLIPS, `${id}.wav`), wav);
+  const meta = { id, created: new Date().toISOString(), audioSec: +clip.audioSec.toFixed(2), bytes: wav.length, sampleRate: clip.sampleRate, silence: silence(clip.pcm, clip.sampleRate) };
+  if (typeof extra.label === "string") meta.label = extra.label.slice(0, 200);
+  if (typeof extra.reference === "string" && extra.reference.trim()) meta.reference = extra.reference.trim().slice(0, 1000);
+  if (SETS[extra.set]) meta.set = extra.set;
+  writeFileSync(metaPath(id), JSON.stringify(meta, null, 2));
+  return meta;
 }
 
 const metaPath = (id) => join(CLIPS, `${id}.json`);
@@ -115,15 +149,18 @@ async function route(req, res, url) {
   }
   if (m === "GET" && path === "/api/health") return send(res, 200, { ok: true });
   if (m === "GET" && path === "/api/config") {
-    return send(res, 200, { sentences: SENTENCES, jargon: CONFIG.jargon ?? [], defaultReference: CONFIG.defaultReference ?? null });
+    const sets = Object.fromEntries(Object.entries(SETS).map(([k, v]) => [k, { sentences: v.sentences, jargon: v.jargon ?? [] }]));
+    return send(res, 200, { sets, defaultReference: CONFIG.defaultReference ?? null });
   }
   if (m === "GET" && path === "/api/backends") return send(res, 200, await Promise.all(backends().map(backendInfo)));
+  if (m === "GET" && path === "/api/easyeffects") return send(res, 200, await eeStatus());
 
   let r;
   if (m === "POST" && (r = /^\/api\/transcribe\/([\w.-]+)$/.exec(path))) {
     const b = backends().find((x) => x.id === r[1]);
     if (!b) return send(res, 404, { error: `unknown or uninstalled model ${r[1]}` });
-    const [status, body] = await transcribe(b, await readBody(req));
+    const set = SETS[url.searchParams.get("set")] ?? SETS.default;
+    const [status, body] = await transcribe(b, await readBody(req), set.prompt);
     return send(res, status, body);
   }
 
@@ -139,14 +176,8 @@ async function route(req, res, url) {
     try {
       extra = JSON.parse(url.searchParams.get("meta") || "{}");
     } catch {}
-    mkdirSync(CLIPS, { recursive: true });
-    const id = newClipId();
-    writeFileSync(join(CLIPS, `${id}.wav`), wav);
-    const meta = { id, created: new Date().toISOString(), audioSec: +clip.audioSec.toFixed(2), bytes: wav.length, sampleRate: clip.sampleRate };
-    if (typeof extra.label === "string") meta.label = extra.label.slice(0, 200);
-    if (typeof extra.reference === "string" && extra.reference.trim()) meta.reference = extra.reference.trim().slice(0, 1000);
-    writeFileSync(metaPath(id), JSON.stringify(meta, null, 2));
-    return send(res, 201, { id, audioSec: meta.audioSec });
+    const meta = saveClip(wav, clip, extra);
+    return send(res, 201, { id: meta.id, audioSec: meta.audioSec, silence: meta.silence });
   }
   if (m === "GET" && path === "/api/clips") {
     if (!existsSync(CLIPS)) return send(res, 200, []);
@@ -165,11 +196,17 @@ async function route(req, res, url) {
       }),
     );
   }
-  if ((r = /^\/api\/clips\/([^/]+)(\/meta|\/results)?$/.exec(path))) {
+  if ((r = /^\/api\/clips\/([^/]+)(\/meta|\/results|\/replay)?$/.exec(path))) {
     const id = r[1];
     if (!CLIP_ID_RE.test(id) || !existsSync(join(CLIPS, `${id}.wav`))) return send(res, 404, { error: "no such clip" });
     if (m === "GET" && !r[2]) return send(res, 200, readFileSync(join(CLIPS, `${id}.wav`)), "audio/wav");
     if (m === "GET" && r[2] === "/meta") return send(res, 200, readMeta(id));
+    if (m === "POST" && r[2] === "/replay") {
+      const src = readMeta(id);
+      const out = await replay(join(CLIPS, `${id}.wav`), url.searchParams.get("preset") || null);
+      const meta = saveClip(out.wav, parseWav(out.wav), { label: `${src.label || id} via ${out.preset}`, reference: src.reference, set: src.set });
+      return send(res, 201, { id: meta.id, audioSec: meta.audioSec, silence: meta.silence, label: meta.label, offsetMs: out.offsetMs });
+    }
     if (m === "PUT" && r[2] === "/results") {
       let results;
       try {

@@ -64,6 +64,7 @@
       <span id="counter" class="muted"></span>
       <button id="next">Next ›</button>
       <span class="muted">dotted = jargon words, counted in the Jargon column</span>
+      <select id="set" hidden title="sentence set (switching reloads the page)"></select>
     </div>
     <details id="allsentences">
       <summary>All sentences</summary>
@@ -77,6 +78,12 @@
   <div class="meter"><div id="level"></div></div>
   <span id="timer" class="muted">0.0 s</span>
   <span id="status" class="muted">loading…</span>
+</section>
+
+<section class="row">
+  <label>Mic <select id="mic"><option value="">system default</option></select></label>
+  <label class="be"><input type="checkbox" id="proc"> browser processing</label>
+  <span class="muted">off: raw; on: the browser's echo cancellation, noise suppression and auto gain</span>
 </section>
 
 <section class="row">
@@ -99,6 +106,8 @@
       <button id="rerun" disabled>Re-run clip</button>
       <audio id="player" controls preload="none"></audio>
       <label class="muted">or a file: <input type="file" id="file" accept="audio/*"></label>
+      <span id="ee" hidden><select id="eepreset" title="EasyEffects input preset (loaded for the replay, then the current one is restored; unsaved edits to it are lost)"></select>
+        <button id="replay" disabled>Replay through EasyEffects</button></span>
     </div>
   </fieldset>
 </section>

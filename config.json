@@ -24,5 +24,28 @@
     "stash",
     "squash",
     "pod"
-  ]
+  ],
+  "sets": {
+    "sova": {
+      "sentences": [
+        "Open a new worktree for the voice branch and run the tests.",
+        "Ask the Overseer to review what the subagent changed in Sova.",
+        "The statechart has three states: idle, recording, and transcribing.",
+        "Spawn a subagent to fix the failing TypeScript build in that worktree.",
+        "Sova should keep the draft when the Overseer pauses the session.",
+        "Move the meeting to Thursday afternoon and tell the rest of the team.",
+        "Before you merge, check the worktree status in Sova. If the statechart test fails, hand it to a subagent and ask the Overseer to decide. Then tell Claude to summarize what changed."
+      ],
+      "jargon": [
+        "Sova",
+        "worktree",
+        "Overseer",
+        "statechart",
+        "subagent",
+        "TypeScript",
+        "Claude"
+      ],
+      "prompt": "Sova is written in TypeScript with SolidJS, Hono, Vite and pnpm; its Overseer, subagent, statechart and worktree code works with pi, Claude and Codex."
+    }
+  }
 }

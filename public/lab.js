@@ -1,5 +1,5 @@
 // whisper-lab page. Relative URLs only, so it works at http://localhost:8850/ and under a path
-// prefix behind a reverse proxy. Sentences and jargon come from the server (sentences.json and
+// prefix behind a reverse proxy. Sentence sets and jargon come from the server (sentences.json and
 // config.json in the repo).
 
 if (!location.pathname.endsWith("/") && !location.pathname.endsWith(".html")) {
@@ -13,7 +13,9 @@ const norm = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}']+/gu, "");
 
 const config = await fetch("api/config")
   .then((r) => r.json())
-  .catch(() => ({ sentences: [], jargon: [], defaultReference: null }));
+  .catch(() => ({ sets: { default: { sentences: [], jargon: [] } }, defaultReference: null }));
+const SET_NAMES = Object.keys(config.sets);
+const SET = config.sets[localStorage.getItem("whisperlab.set")] ? localStorage.getItem("whisperlab.set") : SET_NAMES[0];
 
 const state = {
   backends: [], // from api/backends: the installed models
@@ -27,9 +29,9 @@ const state = {
 
 // ---- reference sentences ---------------------------------------------------------------------------
 
-const SENTENCES = config.sentences.length ? config.sentences : ["(sentences.json is empty)"];
-// Words scored in the Jargon column (normalized with norm(): lower case, punctuation stripped).
-const JARGON = new Set(config.jargon.map(norm));
+const SENTENCES = config.sets[SET].sentences.length ? config.sets[SET].sentences : ["(this sentence set is empty)"];
+// Words scored in the Jargon column, from every set (normalized with norm(): lower case, punctuation stripped).
+const JARGON = new Set(Object.values(config.sets).flatMap((s) => s.jargon).map(norm));
 const isJargon = (w) => JARGON.has(norm(w));
 
 // The reference is always a listed sentence; only a loaded saved clip can override it: with its own
@@ -95,10 +97,44 @@ const step = (d) => selectSentence(SENTENCES[(SENTENCES.indexOf(state.sentence) 
 $("next").onclick = () => step(1);
 $("prev").onclick = () => step(-1);
 $("allsentences").open = matchMedia("(min-width: 700px)").matches;
+$("set").hidden = SET_NAMES.length < 2;
+for (const n of SET_NAMES) $("set").append(new Option(`${n} sentences`, n));
+$("set").value = SET;
+$("set").onchange = () => {
+  localStorage.setItem("whisperlab.set", $("set").value);
+  location.reload();
+};
 
 // ---- setup -------------------------------------------------------------------------------------
 
 $("where").textContent = `${location.origin}${location.pathname}`;
+
+$("proc").checked = localStorage.getItem("whisperlab.proc") === "1";
+$("proc").onchange = () => localStorage.setItem("whisperlab.proc", $("proc").checked ? "1" : "0");
+$("mic").onchange = () => localStorage.setItem("whisperlab.mic", $("mic").value);
+
+/** The mic list (labels and ids appear once the page has had mic access). */
+async function listMics() {
+  const sel = $("mic");
+  const keep = sel.value || localStorage.getItem("whisperlab.mic") || "";
+  const devs = (await navigator.mediaDevices?.enumerateDevices().catch(() => [])) ?? [];
+  sel.length = 1;
+  for (const d of devs) if (d.kind === "audioinput" && d.deviceId && d.deviceId !== "default") sel.append(new Option(d.label || `mic ${sel.length}`, d.deviceId));
+  sel.value = [...sel.options].some((o) => o.value === keep) ? keep : "";
+}
+navigator.mediaDevices?.addEventListener("devicechange", listMics);
+
+const silenceNote = (s) => (s ? `digital zeros ${s.zeroPct}% · longest zero run in speech ${s.longestZeroMs} ms${s.flagged ? (s.longestZeroMs >= 10 ? " ⚠ gated" : " ⚠ zeroed") : ""}` : "");
+
+async function loadEE() {
+  const ee = await fetch("api/easyeffects").then((r) => r.json()).catch(() => ({}));
+  $("ee").hidden = !ee.available;
+  $("ee").title = ee.reason ?? "";
+  if (!ee.available) return;
+  $("eepreset").length = 0;
+  for (const p of ee.presets.includes(ee.preset) ? ee.presets : [ee.preset, ...ee.presets]) $("eepreset").append(new Option(p === ee.preset ? `${p} (current)` : p, p));
+  $("eepreset").value = ee.preset;
+}
 
 $("sequential").checked = state.sequential;
 $("sequential").onchange = () => {
@@ -152,24 +188,25 @@ async function loadClips(selectId) {
     const o = document.createElement("option");
     o.value = c.id;
     const hint = c.label || "";
-    o.textContent = `${c.id} · ${c.audioSec}s${hint ? ` · ${hint.slice(0, 40)}` : ""}`;
+    o.textContent = `${c.id} · ${c.audioSec}s${c.silence?.flagged ? " · ⚠ zeros" : ""}${hint ? ` · ${hint.slice(0, 60)}` : ""}`;
     sel.append(o);
   }
   if (selectId) sel.value = selectId;
-  $("rerun").disabled = !sel.value;
+  $("rerun").disabled = $("replay").disabled = !sel.value;
 }
 
 $("clips").onchange = async () => {
   const id = $("clips").value;
-  $("rerun").disabled = !id;
+  $("rerun").disabled = $("replay").disabled = !id;
   if (!id) return;
   $("player").src = `api/clips/${id}`;
   const meta = await (await fetch(`api/clips/${id}/meta`)).json();
   setReference(typeof meta.reference === "string" ? meta.reference : "");
+  $("clipinfo").textContent = `clip ${id} · ${meta.audioSec}s · ${silenceNote(meta.silence)}`;
   if (Array.isArray(meta.results)) {
     state.clipId = id;
     state.rows = new Map(meta.results.map((r) => [r.id, r]));
-    $("clipinfo").textContent = `clip ${id} · ${meta.audioSec}s · saved results from ${meta.resultsAt ?? "?"}`;
+    $("clipinfo").textContent += ` · saved results from ${meta.resultsAt ?? "?"}`;
     render();
   }
 };
@@ -247,11 +284,11 @@ function setRow(id, patch) {
 }
 
 /** One backend on one clip → its row. */
-async function runOne(b, wav, audioSec) {
+async function runOne(b, wav, audioSec, set) {
   setRow(b.id, { pending: "running…", audioSec });
   const t0 = performance.now();
   try {
-    const res = await fetch(`api/transcribe/${b.id}`, { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav });
+    const res = await fetch(`api/transcribe/${b.id}?set=${encodeURIComponent(set)}`, { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav });
     const rtt = Math.round(performance.now() - t0);
     const j = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
     if (j.error) return setRow(b.id, { pending: null, error: j.error, ms: j.wallMs, audioSec: j.audioSec ?? audioSec, notes: `page round trip ${rtt} ms` });
@@ -264,9 +301,9 @@ async function runOne(b, wav, audioSec) {
 /**
  * Run every enabled model on one clip: all at once (they share the GPU), or one at a time so each
  * latency is uncontended. `wav` is the 16 kHz mono WAV Blob; `clipId` a clip id or a promise of
- * one (results are saved to it once everything is in).
+ * one (results are saved to it once everything is in); `set` the sentence set whose prompt whisper gets.
  */
-async function runAll({ wav, audioSec, clipId, label }) {
+async function runAll({ wav, audioSec, clipId, label, set = SET }) {
   state.rows = new Map();
   state.clipId = null;
   const mode = state.sequential ? "one at a time" : "parallel";
@@ -274,12 +311,14 @@ async function runAll({ wav, audioSec, clipId, label }) {
   const run = state.backends.filter((b) => b.ready && state.enabled[b.id]);
   for (const b of run) setRow(b.id, { pending: state.sequential ? "waiting…" : "running…", audioSec });
   const t0 = performance.now();
-  if (state.sequential) for (const b of run) await runOne(b, wav, audioSec);
-  else await Promise.allSettled(run.map((b) => runOne(b, wav, audioSec)));
+  if (state.sequential) for (const b of run) await runOne(b, wav, audioSec, set);
+  else await Promise.allSettled(run.map((b) => runOne(b, wav, audioSec, set)));
   const total = Math.round(performance.now() - t0);
   $("clipinfo").textContent += ` · all ${run.length} in ${total} ms`;
   state.clipId = (await clipId) ?? null;
   if (state.clipId) {
+    const meta = await fetch(`api/clips/${state.clipId}/meta`).then((r) => r.json()).catch(() => ({}));
+    if (meta.silence) $("clipinfo").textContent += ` · ${silenceNote(meta.silence)}`;
     fetch(`api/clips/${state.clipId}/results`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ results: [...state.rows.values()], reference: state.reference.trim() }) }).catch(() => {});
   }
   setStatus("done");
@@ -290,8 +329,11 @@ async function runAll({ wav, audioSec, clipId, label }) {
 async function startRecording() {
   useSentence();
   let stream;
+  const proc = $("proc").checked;
+  const audio = { channelCount: 1, echoCancellation: proc, noiseSuppression: proc, autoGainControl: proc };
+  if ($("mic").value) audio.deviceId = { exact: $("mic").value };
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    stream = await navigator.mediaDevices.getUserMedia({ audio });
   } catch (err) {
     setStatus(`microphone refused: ${err.message}${window.isSecureContext ? "" : " — the mic needs HTTPS or localhost"}`);
     return;
@@ -310,7 +352,9 @@ async function startRecording() {
   };
   const t0 = performance.now();
   const timer = setInterval(() => ($("timer").textContent = `${((performance.now() - t0) / 1000).toFixed(1)} s`), 100);
-  state.recording = { stream, ctx, node, chunks, timer };
+  const capture = `mic ${stream.getAudioTracks()[0]?.label || "default"} · processing ${proc ? "on" : "off"}`;
+  state.recording = { stream, ctx, node, chunks, timer, capture };
+  listMics();
   $("rec").textContent = "■ Stop";
   $("rec").classList.add("on");
   setStatus(`recording at ${ctx.sampleRate} Hz…`);
@@ -322,6 +366,8 @@ async function stopRecording() {
   $("rec").textContent = "● Record";
   $("rec").classList.remove("on");
   $("rec").disabled = true;
+  setStatus("post-roll…");
+  await new Promise((res) => setTimeout(res, 350)); // keep the last word
   clearInterval(r.timer);
   $("level").style.width = "0";
   r.node.port.postMessage("flush");
@@ -334,8 +380,8 @@ async function stopRecording() {
   const wav = encodeWav(f32);
   $("rec").disabled = false;
   setStatus("transcribing…");
-  const saved = saveClip(wav).catch(() => null);
-  await runAll({ wav, audioSec: f32.length / TARGET_RATE, clipId: saved, label: "recording" });
+  const saved = saveClip(wav, r.capture).catch(() => null);
+  await runAll({ wav, audioSec: f32.length / TARGET_RATE, clipId: saved, label: `recording (${r.capture})` });
   loadClips(await saved);
 }
 
@@ -343,6 +389,7 @@ async function saveClip(wav, label) {
   const meta = {};
   if (label) meta.label = label;
   if (state.reference.trim()) meta.reference = state.reference.trim();
+  meta.set = SET;
   const res = await fetch(`api/clips?meta=${encodeURIComponent(JSON.stringify(meta))}`, { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav });
   if (!res.ok) throw new Error(`save failed ${res.status}`);
   return (await res.json()).id;
@@ -350,16 +397,34 @@ async function saveClip(wav, label) {
 
 $("rec").onclick = () => (state.recording ? stopRecording() : startRecording());
 
-$("rerun").onclick = async () => {
-  const id = $("clips").value;
-  if (!id) return;
-  setStatus(`re-running ${id}…`);
+async function rerun(id, label) {
+  setStatus(`running ${id}…`);
   const meta = await fetch(`api/clips/${id}/meta`).then((r) => r.json()).catch(() => ({}));
   setReference(typeof meta.reference === "string" ? meta.reference : "");
   const bytes = await fetch(`api/clips/${id}`).then((r) => r.arrayBuffer());
   const wav = new Blob([bytes], { type: "audio/wav" });
   const f32 = await decodeTo16k(bytes.slice(0));
-  await runAll({ wav, audioSec: f32.length / TARGET_RATE, clipId: id, label: `re-run ${id}` });
+  await runAll({ wav, audioSec: f32.length / TARGET_RATE, clipId: id, label, set: meta.set ?? "default" });
+}
+
+$("rerun").onclick = () => $("clips").value && rerun($("clips").value, `re-run ${$("clips").value}`);
+
+$("replay").onclick = async () => {
+  const id = $("clips").value;
+  if (!id) return;
+  $("replay").disabled = true;
+  setStatus(`replaying ${id} through EasyEffects (${$("eepreset").value})…`);
+  try {
+    const res = await fetch(`api/clips/${id}/replay?preset=${encodeURIComponent($("eepreset").value)}`, { method: "POST" });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
+    await loadClips(j.id);
+    $("player").src = `api/clips/${j.id}`;
+    await rerun(j.id, `${j.label} (offset ${j.offsetMs} ms)`);
+  } catch (err) {
+    setStatus(`replay failed: ${err.message}`);
+  }
+  $("replay").disabled = !$("clips").value;
 };
 
 $("file").onchange = async () => {
@@ -491,3 +556,5 @@ function render() {
 renderReference();
 loadBackends();
 loadClips();
+listMics();
+loadEE();
