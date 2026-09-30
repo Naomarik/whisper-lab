@@ -382,7 +382,9 @@ async function stopRecording() {
   setStatus("transcribing…");
   const saved = saveClip(wav, r.capture).catch(() => null);
   await runAll({ wav, audioSec: f32.length / TARGET_RATE, clipId: saved, label: `recording (${r.capture})` });
-  loadClips(await saved);
+  const id = await saved;
+  loadClips(id);
+  if (id) $("player").src = `api/clips/${id}`;
 }
 
 async function saveClip(wav, label) {
