@@ -124,7 +124,7 @@ async function listMics() {
 }
 navigator.mediaDevices?.addEventListener("devicechange", listMics);
 
-const silenceNote = (s) => (s ? `digital zeros ${s.zeroPct}% · longest zero run in speech ${s.longestZeroMs} ms${s.flagged ? (s.longestZeroMs >= 10 ? " ⚠ gated" : " ⚠ zeroed") : ""}` : "");
+const silenceNote = (s) => (s ? `digital zeros ${s.zeroPct}% · longest zero run in speech ${s.longestZeroMs} ms${s.flagged ? (s.longestZeroMs >= 50 ? " ⚠ gated" : " ⚠ zeroed") : ""}` : "");
 
 async function loadEE() {
   const ee = await fetch("api/easyeffects").then((r) => r.json()).catch(() => ({}));

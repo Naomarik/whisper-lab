@@ -99,8 +99,9 @@ function newClipId() {
 
 /**
  * Digital silence: the fraction of exact-zero samples, and the longest zero run between the first
- * and last sample above -40 dBFS. A live mic gives neither 1% exact zeros nor a 10 ms run inside
- * speech; noise suppression and gates (RNNoise's VAD) do.
+ * and last sample above -40 dBFS. A live mic's quiet lead-in and tail can hold ~10% exact zeros and
+ * a capture dropout ~20 ms, but not 15% zeros or a 50 ms run inside speech; noise suppression and
+ * gates (RNNoise's VAD) do.
  */
 function silence(pcm, rate) {
   let zeros = 0;
@@ -112,7 +113,7 @@ function silence(pcm, rate) {
   let longest = 0;
   for (let i = first; first >= 0 && i <= last; i++) longest = Math.max(longest, (run = pcm[i] === 0 ? run + 1 : 0));
   const longestZeroMs = Math.round((longest / rate) * 1000);
-  return { zeroPct: +((zeros / Math.max(1, pcm.length)) * 100).toFixed(1), longestZeroMs, flagged: longestZeroMs >= 10 || zeros >= pcm.length / 100 };
+  return { zeroPct: +((zeros / Math.max(1, pcm.length)) * 100).toFixed(1), longestZeroMs, flagged: longestZeroMs >= 50 || zeros >= pcm.length * 0.15 };
 }
 
 /** Saves a WAV clip with its metadata → the new meta. */

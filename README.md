@@ -97,7 +97,7 @@ Open <http://127.0.0.1:8850/>. Only installed models show up as rows.
   **Re-run a saved clip** to play it, see its saved results, or run it again. You can also load
   an audio file.
 - Each clip shows its **digital silence**: the share of exact-zero samples and the longest run of
-  zeros inside speech. A live mic has neither; ⚠ `zeroed` means noise suppression zeroed the
+  zeros inside speech. A live mic stays under 15% zeros and 50 ms runs; ⚠ `zeroed` means noise suppression zeroed the
   pauses, ⚠ `gated` means a gate (e.g. RNNoise's voice-activity threshold) cut holes into speech.
 
 ## Tuning an EasyEffects mic preset (Linux)
